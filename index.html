@@ -31,6 +31,7 @@
     <button id="playPause">Pause</button>
     <button id="reset">Reset View</button>
     <button id="restart">Restart Attacks</button>
+    <button id="test">Test Attack</button>
   </div>
 
   <div id="globe-container"></div>
@@ -112,7 +113,7 @@
     function rand(min,max){return Math.random()*(max-min)+min;}
 
     // Controls
-    document.getElementById('playPause').onclick = () => {
+    document.getElementById('playPause').onclick = function() {
       playing = !playing;
       globe.controls().autoRotate = playing;
       this.textContent = playing ? 'Pause' : 'Play';
@@ -137,6 +138,24 @@
         document.getElementById('count').textContent = displayed.length;
         render();
       }, 120);
+    };
+
+    // New Test Button: Fires a single random attack event
+    document.getElementById('test').onclick = () => {
+      const testGeo = { lat: Math.random()*180-90, lng: Math.random()*360-180 };
+      const testAttack = {
+        startLat: testGeo.lat + rand(-3,3),
+        startLng: testGeo.lng + rand(-5,5),
+        endLat: 50.11,
+        endLng: 8.68,
+        color: [['red', 'white'], ['white', 'red']][Math.round(Math.random())],
+        stroke: 1.5 + Math.random()*1.5,
+        dashAnimateTime: 1500 + Math.random()*2000
+      };
+      displayed.push(testAttack);
+      document.getElementById('count').textContent = displayed.length;
+      render();
+      document.getElementById('status').textContent = 'Test attack fired!';
     };
 
     // Start

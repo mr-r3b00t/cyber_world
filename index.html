@@ -1,33 +1,60 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Real-Time Global Cyber Attacks</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Global Cyber Attacks Live • GreedyBear Honeynet</title>
   <script src="https://unpkg.com/globe.gl"></script>
   <style>
-    body { margin:0; overflow:hidden; background:#000; font-family: 'Segoe UI', sans-serif; }
-    #globe-container { width:100vw; height:100vh; }
+    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; font-family:'Segoe UI',sans-serif; }
+    #globe-container { position:fixed; top:0; left:0; right:0; bottom:0; width:100vw; height:100vh; }
+    canvas { display:block; width:100% !important; height:100% !important; }
+
     #title {
-      position:absolute; top:20px; left:50%; transform:translateX(-50%);
-      color:#00ffcc; font-size:2.8rem; text-shadow:0 0 25px #00ffcc;
-      z-index:10; pointer-events:none; letter-spacing:3px;
+      position:fixed; top:20px; left:50%; transform:translateX(-50%);
+      color:#00ffcc; font-size:3rem; font-weight:700; text-shadow:0 0 30px #00ffcc;
+      letter-spacing:4px; z-index:10; pointer-events:none;
     }
+
     #stats {
-      position:absolute; bottom:20px; left:20px;
-      background:rgba(0,0,0,0.8); padding:18px 30px; border-radius:15px;
-      border:2px solid #00ff88; color:#00ffcc; z-index:10; font-size:1.3rem;
-      box-shadow:0 0 20px rgba(0,255,200,0.3);
+      position:fixed; bottom:20px; left:20px; background:rgba(0,0,0,0.85);
+      padding:18px 32px; border-radius:16px; border:2px solid #00ff88;
+      color:#00ffcc; z-index:10; font-size:1.3rem;
+      box-shadow:0 0 30px rgba(0,255,136,0.4); backdrop-filter:blur(8px);
     }
-    .stat { margin:10px 0; }
+    #count { font-weight:bold; color:#00ffff; font-size:1.6rem; }
+
+    /* Control Buttons */
+    #controls {
+      position:fixed; bottom:20px; right:20px; z-index:10; display:flex; gap:12px;
+    }
+    button {
+      background:rgba(0,255,200,0.15); border:2px solid #00ffcc; color:#00ffcc;
+      padding:12px 20px; border-radius:12px; font-size:1rem; font-weight:bold;
+      cursor:pointer; transition:all 0.3s; box-shadow:0 0 20px rgba(0,255,200,0.3);
+    }
+    button:hover { background:rgba(0,255,200,0.3); transform:scale(1.05); }
+    button:active { transform:scale(0.98); }
+    button.pause { border-color:#ff0066; color:#ff0066; }
+    button.pause:hover { background:rgba(255,0,102,0.3); }
   </style>
 </head>
 <body>
+
   <div id="title">GLOBAL CYBER ATTACKS LIVE</div>
+
   <div id="stats">
-    <div class="stat">Attacks visualized: <span id="count">0</span></div>
-    <div class="stat">Source: honeypot.json</div>
+    <div>Attacks visualized: <span id="count">0</span></div>
+    <div>Source: GreedyBear Honeynet</div>
+    <div id="status">Loading data…</div>
   </div>
+
+  <div id="controls">
+    <button id="playPause">Pause Rotation</button>
+    <button id="reset">Reset View</button>
+    <button id="refresh">Refresh Data</button>
+  </div>
+
   <div id="globe-container"></div>
 
   <script>
@@ -37,83 +64,117 @@
       .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
       .atmosphereColor('#00ffff')
       .atmosphereAltitude(0.18)
-      .pointOfView({ lat: 15, lng: 0, altitude: 2.5 })
+      .pointOfView({ lat: 20, lng: 10, altitude: 2.8 })
       (document.getElementById('globe-container'));
 
     let attacks = [];
-    let totalAttacks = 0;
+    let isPaused = false;
+    const geoCache = new Map();
 
-    // Load attacks from local honeypot.json
+    // === BUTTON CONTROLS ===
+    const playPauseBtn = document.getElementById('playPause');
+    const resetBtn = document.getElementById('reset');
+    const refreshBtn = document.getElementById('refresh');
+
+    playPauseBtn.addEventListener('click', () => {
+      isPaused = !isPaused;
+      globe.controls().autoRotate = !isPaused;
+      playPauseBtn.textContent = isPaused ? 'Play Rotation' : 'Pause Rotation';
+      playPauseBtn.classList.toggle('pause', isPaused);
+    });
+
+    resetBtn.addEventListener('click', () => {
+      globe.pointOfView({ lat: 20, lng: 10, altitude: 2.8 }, 1500);
+    });
+
+    refreshBtn.addEventListener('click', () => {
+      document.getElementById('status').textContent = 'Refreshing data…';
+      loadAttacks();
+    });
+
+    // === GEO + DATA ===
+    async function geolocate(ip) {
+      if (geoCache.has(ip)) return geoCache.get(ip);
+      try {
+        const res = await fetch(`https://ipapi.co/${ip}/json/`);
+        const d = await res.json();
+        if (d.latitude && d.longitude) {
+          const loc = { lat: d.latitude, lng: d.longitude };
+          geoCache.set(ip, loc);
+          return loc;
+        }
+      } catch (e) { console.warn('GeoIP fail:', ip); }
+      return { lat: (Math.random() - 0.5) * 180, lng: (Math.random() - 0.5) * 360 };
+    }
+
     async function loadAttacks() {
       try {
-        const response = await fetch('honeypot.json');
-        if (!response.ok) throw new Error('File not found');
-        const data = await response.json();
+        const resp = await fetch('https://mr-r3b00t.github.io/cyber_world/honeypot.json?t=' + Date.now());
+        if (!resp.ok) throw new Error('Not found');
+        const data = await resp.json();
 
-        // Clear old arcs
         attacks = [];
+        const ips = new Set();
 
-        data.forEach(attack => {
-          const srcLat = attack.src_lat || attack.latitude || attack.src_latitude;
-          const srcLng = attack.src_lon || attack.longitude || attack.src_longitude;
-          const dstLat = attack.dst_lat || attack.dst_latitude || 50.11;   // fallback: Europe (honeypot location)
-          const dstLng = attack.dst_lon || attack.dst_longitude || 8.68;
-
-          if (!srcLat || !srcLng) return;
-
-          attacks.push({
-            startLat: srcLat + rand(-3, 3),
-            startLng: srcLng + rand(-5, 5),
-            endLat: dstLat,
-            endLng: dstLng,
-            color: ['#ff0066', '#00ffcc'],
-            stroke: 1.5 + Math.random() * 2.5,
-            dashAnimateTime: 1500 + Math.random() * 3000
-          });
+        // Extract IPs from all tables
+        ['High-Impact IPs', 'Recent New Threats', 'High Login Attempt IPs'].forEach(key => {
+          if (data[key]) {
+            data[key].forEach(row => {
+              const ip = row['IP Address'] || row['IP'] || row;
+              if (ip && typeof ip === 'string') ips.add(ip.trim());
+            });
+          }
         });
 
-        totalAttacks = attacks.length;
-        document.getElementById('count').textContent = totalAttacks.toLocaleString();
+        const ipList = Array.from(ips).slice(0, 120);
+        document.getElementById('status').textContent = `Geolocating ${ipList.length} IPs…`;
 
-        renderAttacks();
+        for (const ip of ipList) {
+          const geo = await geolocate(ip);
+          attacks.push({
+            startLat: geo.lat + rand(-2, 2),
+            startLng: geo.lng + rand(-4, 4),
+            endLat: 50.11, endLng: 8.68,
+            color: Math.random() < 0.15 ? ['#ff0066','#ff3366'] : ['#00ffcc','#00ffff'],
+            stroke: 1.5 + Math.random() * 2,
+            dashAnimateTime: 1800 + Math.random() * 2200
+          });
+        }
 
-      } catch (err) {
-        console.error("Could not load honeypot.json:", err);
-        document.getElementById('stats').innerHTML += '<br><span style="color:#ff0066">honeypot.json not found!</span>';
+        document.getElementById('count').textContent = attacks.length.toLocaleString();
+        document.getElementById('status').textContent = `Live • ${new Date().toLocaleTimeString()}`;
+        render();
+
+      } catch (e) {
+        document.getElementById('status').innerHTML = `<span style="color:#ff0066">Error: ${e.message}</span>`;
       }
     }
 
-    function renderAttacks() {
-      globe.arcsData(attacks)
-        .arcColor('color')
-        .arcStroke('stroke')
-        .arcDashLength(0.9)
-        .arcDashGap(4)
+    function render() {
+      const visible = attacks.slice(-800);
+      globe.arcsData(visible)
+        .arcColor('color').arcStroke('stroke')
+        .arcDashLength(0.9).arcDashGap(4)
         .arcDashInitialGap(() => Math.random() * 5)
         .arcDashAnimateTime('dashAnimateTime');
 
-      const points = attacks.flatMap(a => [
+      const points = visible.flatMap(a => [
         { lat: a.startLat, lng: a.startLng, size: 0.6, color: '#ff3366' },
-        { lat: a.endLat,   lng: a.endLng,   size: 1.0, color: '#00ffff' }
+        { lat: a.endLat,   lng: a.endLng,   size: 1.1, color: '#00ffff' }
       ]);
-
       globe.pointsData(points)
-        .pointAltitude(0.015)
-        .pointRadius('size')
-        .pointColor('color');
+        .pointAltitude(0.018).pointRadius('size').pointColor('color');
     }
 
     function rand(min, max) { return Math.random() * (max - min) + min; }
 
-    // Auto-rotate
+    // Auto-rotate ON by default
     globe.controls().autoRotate = true;
     globe.controls().autoRotateSpeed = 0.5;
 
-    // Load on start
+    // Start
     loadAttacks();
-
-    // Optional: Reload every 30 seconds if you update the JSON file
-    // setInterval(loadAttacks, 30000);
+    setInterval(loadAttacks, 120000); // refresh every 2 mins
   </script>
 </body>
 </html>

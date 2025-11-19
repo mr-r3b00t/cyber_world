@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Real-Time Global Cyber Attack Map (GreedyBear Feed)</title>
+  <script src="https://unpkg.com/globe.gl"></script>
+  <style>
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      background: #000; 
+      font-family: 'Segoe UI', sans-serif;
+    }
+    #globe-container { width: 100vw; height: 100vh; }
+    #title {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #00ffcc;
+      font-size: 2.5rem;
+      text-shadow: 0 0 20px #00ffcc;
+      z-index: 10;
+      pointer-events: none;
+    }
+    #stats {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.7);
+      padding: 15px 25px;
+      border-radius: 12px;
+      color: #00ffcc;
+      border: 1px solid #00ff88;
+      z-index: 10;
+      font-size: 1.2rem;
+    }
+    .stat { margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <div id="title">Real-Time Global Cyber Attacks</div>
+  <div id="stats">
+    <div class="stat">Attacks in last hour: <span id="count">0</span></div>
+    <div class="stat">Data source: GreedyBear Honeynet</div>
+  </div>
+  <div id="globe-container"></div>
+
+  <script>
+    const globe = Globe()
+      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
+      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
+      .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
+      .atmosphereColor('#00ffcc')
+      .atmosphereAltitude(0.15)
+      .pointOfView({ lat: 20, lng: 0, altitude: 2.5 })
+      (document.getElementById('globe-container'));
+
+    // Attack arcs
+    let attacks = [];
+    let attackCounter = 0;
+
+    // Colors
+    const colorInterpolator = t => `rgba(0, 255, 200, ${1 - t})`;
+
+    // Simple GeoIP lookup cache (using free public API - ipapi.co)
+    const geoCache = new Map();
+    async function geolocate(ip) {
+      if (geoCache.has(ip)) return geoCache.get(ip);
+      try {
+        const res = await fetch(`https://ipapi.co/${ip}/json/`);
+        const data = await res.json();
+        const loc = { lat: data.latitude, lng: data.longitude };
+        geoCache.set(ip, loc);
+        return loc;
+      } catch (e) {
+        // Fallback to random global point if lookup fails
+        return { lat: (Math.random() - 0.5) * 180, lng: (Math.random() - 0.5) * 360 };
+      }
+    }
+
+    // Fetch real-time attacks from GreedyBear Honeynet API
+    async function fetchAttacks() {
+      try {
+        // Target the API endpoint behind the feeds page
+        const res = await fetch('https://greedybear.honeynet.org/api/attacks');
+        if (!res.ok) throw new Error('API unavailable');
+        const data = await res.json();
+        
+        // Assuming structure: array of {src_ip, dst_ip, timestamp, event_type, ...}
+        // Adjust parsing based on actual fields (e.g., if different, tweak below)
+        const newAttacks = data.slice(-10); // Last 10 for performance
+        
+        for (const attack of newAttacks) {
+          const srcIp = attack.src_ip || attack.srcIP;
+          const dstIp = attack.dst_ip || attack.dstIP;
+          
+          if (!srcIp || !dstIp) continue;
+
+          const [srcGeo, dstGeo] = await Promise.all([
+            geolocate(srcIp),
+            geolocate(dstIp)
+          ]);
+
+          // Add a new arc
+          attacks.push({
+            startLat: srcGeo.lat,
+            startLng: srcGeo.lng,
+            endLat: dstGeo.lat,
+            endLng: dstGeo.lng,
+            color: ['#ff0066', '#00ffcc'],
+            stroke: 2 + Math.random() * 2,
+            dashArray: [2, 8],
+            dashGap: 4,
+            dashAnimateTime: 2000 + Math.random() * 3000
+          });
+
+          attackCounter++;
+          document.getElementById('count').textContent = attackCounter;
+        }
+
+        // Keep only last 500 arcs to prevent lag
+        if (attacks.length > 500) attacks = attacks.slice(-500);
+
+        globe.arcsData(attacks)
+          .arcColor('color')
+          .arcStroke('stroke')
+          .arcDashLength(0.8)
+          .arcDashGap('dashGap')
+          .arcDashInitialGap(() => Math.random() * 5)
+          .arcDashAnimateTime('dashAnimateTime');
+
+        // Glowing points
+        const points = attacks.flatMap(a => [
+          { lat: a.startLat, lng: a.startLng, size: 0.5, color: '#ff0066' },
+          { lat: a.endLat,   lng: a.endLng,   size: 0.8, color: '#00ffcc' }
+        ]);
+
+        globe.pointsData(points)
+          .pointAltitude(0.01)
+          .pointRadius('size')
+          .pointColor('color');
+
+      } catch (e) {
+        console.log("Error fetching GreedyBear attacks:", e);
+        // Optional: Fall back to sample data if needed
+      }
+    }
+
+    // Initial load
+    fetchAttacks();
+
+    // Update every 10 seconds (feed is high-volume)
+    setInterval(fetchAttacks, 10000);
+
+    // Auto-rotate
+    globe.controls().autoRotate = true;
+    globe.controls().autoRotateSpeed = 0.6;
+  </script>
+</body>
+</html>

@@ -1,59 +1,119 @@
-# save as: download_greedybear.py
-# run with: python download_greedybear.py
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Real-Time Global Cyber Attacks</title>
+  <script src="https://unpkg.com/globe.gl"></script>
+  <style>
+    body { margin:0; overflow:hidden; background:#000; font-family: 'Segoe UI', sans-serif; }
+    #globe-container { width:100vw; height:100vh; }
+    #title {
+      position:absolute; top:20px; left:50%; transform:translateX(-50%);
+      color:#00ffcc; font-size:2.8rem; text-shadow:0 0 25px #00ffcc;
+      z-index:10; pointer-events:none; letter-spacing:3px;
+    }
+    #stats {
+      position:absolute; bottom:20px; left:20px;
+      background:rgba(0,0,0,0.8); padding:18px 30px; border-radius:15px;
+      border:2px solid #00ff88; color:#00ffcc; z-index:10; font-size:1.3rem;
+      box-shadow:0 0 20px rgba(0,255,200,0.3);
+    }
+    .stat { margin:10px 0; }
+  </style>
+</head>
+<body>
+  <div id="title">GLOBAL CYBER ATTACKS LIVE</div>
+  <div id="stats">
+    <div class="stat">Attacks visualized: <span id="count">0</span></div>
+    <div class="stat">Source: honeypot.json</div>
+  </div>
+  <div id="globe-container"></div>
 
-import json
-import requests
-from datetime import datetime
+  <script>
+    const globe = Globe()
+      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
+      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
+      .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
+      .atmosphereColor('#00ffff')
+      .atmosphereAltitude(0.18)
+      .pointOfView({ lat: 15, lng: 0, altitude: 2.5 })
+      (document.getElementById('globe-container'));
 
-URL = "https://greedybear.honeynet.org/feeds?page=1"
+    let attacks = [];
+    let totalAttacks = 0;
 
-print("Downloading latest attacks from GreedyBear...")
+    // Load attacks from local honeypot.json
+    async function loadAttacks() {
+      try {
+        const response = await fetch('honeypot.json');
+        if (!response.ok) throw new Error('File not found');
+        const data = await response.json();
 
-try:
-    # GreedyBear loads the data via JavaScript → we fetch the exact API used by the site
-    # Inspect → Network tab shows it calls this endpoint directly:
-    api_url = "https://greedybear.honeynet.org/api/v1/attacks/recent/?page=1&page_size=5000"
+        // Clear old arcs
+        attacks = [];
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; GreedyBear-Downloader/1.0)",
-        "Accept": "application/json"
+        data.forEach(attack => {
+          const srcLat = attack.src_lat || attack.latitude || attack.src_latitude;
+          const srcLng = attack.src_lon || attack.longitude || attack.src_longitude;
+          const dstLat = attack.dst_lat || attack.dst_latitude || 50.11;   // fallback: Europe (honeypot location)
+          const dstLng = attack.dst_lon || attack.dst_longitude || 8.68;
+
+          if (!srcLat || !srcLng) return;
+
+          attacks.push({
+            startLat: srcLat + rand(-3, 3),
+            startLng: srcLng + rand(-5, 5),
+            endLat: dstLat,
+            endLng: dstLng,
+            color: ['#ff0066', '#00ffcc'],
+            stroke: 1.5 + Math.random() * 2.5,
+            dashAnimateTime: 1500 + Math.random() * 3000
+          });
+        });
+
+        totalAttacks = attacks.length;
+        document.getElementById('count').textContent = totalAttacks.toLocaleString();
+
+        renderAttacks();
+
+      } catch (err) {
+        console.error("Could not load honeypot.json:", err);
+        document.getElementById('stats').innerHTML += '<br><span style="color:#ff0066">honeypot.json not found!</span>';
+      }
     }
 
-    response = requests.get(api_url, headers=headers, timeout=20)
-    response.raise_for_status()
-    data = response.json()
+    function renderAttacks() {
+      globe.arcsData(attacks)
+        .arcColor('color')
+        .arcStroke('stroke')
+        .arcDashLength(0.9)
+        .arcDashGap(4)
+        .arcDashInitialGap(() => Math.random() * 5)
+        .arcDashAnimateTime('dashAnimateTime');
 
-    attacks = data.get("results", [])  # GreedyBear uses pagination → "results" key
+      const points = attacks.flatMap(a => [
+        { lat: a.startLat, lng: a.startLng, size: 0.6, color: '#ff3366' },
+        { lat: a.endLat,   lng: a.endLng,   size: 1.0, color: '#00ffff' }
+      ]);
 
-    # Convert to the simple format our map expects
-    # (you can keep more fields if you want — the map only needs src_lat/src_lon)
-    simple_attacks = []
-    for attack in attacks:
-        src_ip = attack.get("source_ip")
-        if not src_ip:
-            continue
+      globe.pointsData(points)
+        .pointAltitude(0.015)
+        .pointRadius('size')
+        .pointColor('color');
+    }
 
-        # GreedyBear already includes geolocation!
-        lat = attack.get("source_latitude")
-        lon = attack.get("source_longitude")
+    function rand(min, max) { return Math.random() * (max - min) + min; }
 
-        if lat is not None and lon is not None:
-            simple_attacks.append({
-                "src_lat": round(float(lat), 5),
-                "src_lon": round(float(lon), 5),
-                # Optional: keep extra info for future use
-                "ip": src_ip,
-                "timestamp": attack.get("timestamp"),
-                "attack_type": attack.get("attack_type") or attack.get("type")
-            })
+    // Auto-rotate
+    globe.controls().autoRotate = true;
+    globe.controls().autoRotateSpeed = 0.5;
 
-    # Save to file
-    with open("honeypot.json", "w", encoding="utf-8") as f:
-        json.dump(simple_attacks, f, indent=2)
+    // Load on start
+    loadAttacks();
 
-    print(f"Success! Downloaded {len(simple_attacks):,} attacks → honeypot.json")
-    print(f"Last attack: {simple_attacks[0]['timestamp'] if simple_attacks else 'N/A'}")
-
-except Exception as e:
-    print("Error:", e)
-    print("Tip: The site may have changed — open the page in browser, press F12 → Network → look for a request returning JSON and update api_url")
+    // Optional: Reload every 30 seconds if you update the JSON file
+    // setInterval(loadAttacks, 30000);
+  </script>
+</body>
+</html>

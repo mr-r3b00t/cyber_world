@@ -6,37 +6,25 @@
   <title>Global Cyber Attacks Live • GreedyBear Honeynet</title>
   <script src="https://unpkg.com/globe.gl"></script>
   <style>
-    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; font-family:'Segoe UI',sans-serif; }
-    #globe-container { position:fixed; top:0; left:0; right:0; bottom:0; width:100vw; height:100vh; }
-    canvas { display:block; width:100% !important; height:100% !important; }
+    html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:'Segoe UI',sans-serif;}
+    #globe-container{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;}
+    canvas{display:block;width:100%!important;height:100%!important;}
 
-    #title {
-      position:fixed; top:20px; left:50%; transform:translateX(-50%);
-      color:#00ffcc; font-size:3rem; font-weight:700; text-shadow:0 0 30px #00ffcc;
-      letter-spacing:4px; z-index:10; pointer-events:none;
-    }
+    #title{position:fixed;top:20px;left:50%;transform:translateX(-50%);color:#00ffcc;font-size:3rem;font-weight:700;
+      text-shadow:0 0 30px #00ffcc;letter-spacing:4px;z-index:10;pointer-events:none;}
 
-    #stats {
-      position:fixed; bottom:20px; left:20px; background:rgba(0,0,0,0.85);
-      padding:18px 32px; border-radius:16px; border:2px solid #00ff88;
-      color:#00ffcc; z-index:10; font-size:1.3rem;
-      box-shadow:0 0 30px rgba(0,255,136,0.4); backdrop-filter:blur(8px);
-    }
-    #count { font-weight:bold; color:#00ffff; font-size:1.6rem; }
+    #stats{position:fixed;bottom:20px;left:20px;background:rgba(0,0,0,0.85);padding:18px 32px;border-radius:16px;
+      border:2px solid #00ff88;color:#00ffcc;z-index:10;font-size:1.3rem;box-shadow:0 0 30px rgba(0,255,136,0.4);backdrop-filter:blur(8px);}
+    #count{font-weight:bold;color:#00ffff;font-size:1.6rem;}
 
-    /* Control Buttons */
-    #controls {
-      position:fixed; bottom:20px; right:20px; z-index:10; display:flex; gap:12px;
-    }
-    button {
-      background:rgba(0,255,200,0.15); border:2px solid #00ffcc; color:#00ffcc;
-      padding:12px 20px; border-radius:12px; font-size:1rem; font-weight:bold;
-      cursor:pointer; transition:all 0.3s; box-shadow:0 0 20px rgba(0,255,200,0.3);
-    }
-    button:hover { background:rgba(0,255,200,0.3); transform:scale(1.05); }
-    button:active { transform:scale(0.98); }
-    button.pause { border-color:#ff0066; color:#ff0066; }
-    button.pause:hover { background:rgba(255,0,102,0.3); }
+    #controls{position:fixed;bottom:20px;right:20px;z-index:10;display:flex;gap:12px;flex-wrap:wrap;}
+    button{background:rgba(0,255,200,0.15);border:2px solid #00ffcc;color:#00ffcc;padding:12px 20px;border-radius:12px;
+      font-size:1rem;font-weight:bold;cursor:pointer;transition:all 0.3s;box-shadow:0 0 20px rgba(0,255,200,0.3);}
+    button:hover{background:rgba(0,255,200,0.3);transform:scale(1.05);}
+    button:active{transform:scale(0.98);}
+    button.pause, button.replay{border-color:#ff6600;color:#ff6600;}
+    button.pause:hover, button.replay:hover{background:rgba(255,102,0,0.3);}
+    button:disabled{opacity:0.5;cursor:not-allowed;}
   </style>
 </head>
 <body>
@@ -53,6 +41,7 @@
     <button id="playPause">Pause Rotation</button>
     <button id="reset">Reset View</button>
     <button id="refresh">Refresh Data</button>
+    <button id="restart">Restart Attacks</button>
   </div>
 
   <div id="globe-container"></div>
@@ -67,15 +56,18 @@
       .pointOfView({ lat: 20, lng: 10, altitude: 2.8 })
       (document.getElementById('globe-container'));
 
-    let attacks = [];
+    let allAttacks = [];           // Full dataset (with timestamp if available)
+    let currentAttacks = [];        // Currently visible attacks
     let isPaused = false;
+    let replayInterval = null;
     const geoCache = new Map();
 
-    // === BUTTON CONTROLS ===
+    const statusEl = document.getElementById('status');
+    const countEl = document.getElementById('count');
     const playPauseBtn = document.getElementById('playPause');
-    const resetBtn = document.getElementById('reset');
-    const refreshBtn = document.getElementById('refresh');
+    const restartBtn = document.getElementById('restart');
 
+    // === BUTTONS ===
     playPauseBtn.addEventListener('click', () => {
       isPaused = !isPaused;
       globe.controls().autoRotate = !isPaused;
@@ -83,13 +75,41 @@
       playPauseBtn.classList.toggle('pause', isPaused);
     });
 
-    resetBtn.addEventListener('click', () => {
+    document.getElementById('reset').addEventListener('click', () => {
       globe.pointOfView({ lat: 20, lng: 10, altitude: 2.8 }, 1500);
     });
 
-    refreshBtn.addEventListener('click', () => {
-      document.getElementById('status').textContent = 'Refreshing data…';
+    document.getElementById('refresh').addEventListener('click', () => {
+      statusEl.textContent = 'Refreshing data…';
       loadAttacks();
+    });
+
+    restartBtn.addEventListener('click', () => {
+      if (replayInterval) clearInterval(replayInterval);
+      currentAttacks = [];
+      countEl.textContent = '0';
+      statusEl.textContent = 'Replaying from oldest attack…';
+      restartBtn.disabled = true;
+      restartBtn.textContent = 'Replaying…';
+
+      // Sort by timestamp if available, otherwise just use array order
+      const sorted = allAttacks.slice().sort((a,b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+      let i = 0;
+      replayInterval = setInterval(() => {
+        if (i >= sorted.length) {
+          clearInterval(replayInterval);
+          replayInterval = null;
+          statusEl.textContent = `Replay finished • ${new Date().toLocaleTimeString()}`;
+          restartBtn.disabled = false;
+          restartBtn.textContent = 'Restart Attacks';
+          return;
+        }
+        currentAttacks.push(sorted[i]);
+        countEl.textContent = currentAttacks.length.toLocaleString();
+        render();
+        i++;
+      }, 150); // ~150ms per attack = cinematic feel
     });
 
     // === GEO + DATA ===
@@ -103,8 +123,8 @@
           geoCache.set(ip, loc);
           return loc;
         }
-      } catch (e) { console.warn('GeoIP fail:', ip); }
-      return { lat: (Math.random() - 0.5) * 180, lng: (Math.random() - 0.5) * 360 };
+      } catch (e) {}
+      return { lat: (Math.random()-0.5)*180, lng: (Math.random()-0.5)*360 };
     }
 
     async function loadAttacks() {
@@ -113,7 +133,7 @@
         if (!resp.ok) throw new Error('Not found');
         const data = await resp.json();
 
-        attacks = [];
+        allAttacks = [];
         const ips = new Set();
 
         // Extract IPs from all tables
@@ -126,36 +146,39 @@
           }
         });
 
-        const ipList = Array.from(ips).slice(0, 120);
-        document.getElementById('status').textContent = `Geolocating ${ipList.length} IPs…`;
+        statusEl.textContent = `Geolocating ${ips.size} unique IPs…`;
 
-        for (const ip of ipList) {
+        for (const ip of ips) {
           const geo = await geolocate(ip);
-          attacks.push({
-            startLat: geo.lat + rand(-2, 2),
-            startLng: geo.lng + rand(-4, 4),
-            endLat: 50.11, endLng: 8.68,
+          allAttacks.push({
+            startLat: geo.lat + rand(-2,2),
+            startLng: geo.lng + rand(-4,4),
+            endLat: 50.11,
+            endLng: 8.68,
             color: Math.random() < 0.15 ? ['#ff0066','#ff3366'] : ['#00ffcc','#00ffff'],
-            stroke: 1.5 + Math.random() * 2,
-            dashAnimateTime: 1800 + Math.random() * 2200
+            stroke: 1.5 + Math.random()*2,
+            dashAnimateTime: 1800 + Math.random()*2200,
+            timestamp: Date.now() // fallback timestamp
           });
         }
 
-        document.getElementById('count').textContent = attacks.length.toLocaleString();
-        document.getElementById('status').textContent = `Live • ${new Date().toLocaleTimeString()}`;
+        // Show all immediately on first load
+        currentAttacks = allAttacks.slice();
+        countEl.textContent = currentAttacks.length.toLocaleString();
+        statusEl.textContent = `Live • ${new Date().toLocaleTimeString()}`;
         render();
 
       } catch (e) {
-        document.getElementById('status').innerHTML = `<span style="color:#ff0066">Error: ${e.message}</span>`;
+        statusEl.innerHTML = `<span style="color:#ff0066">Error: ${e.message}</span>`;
       }
     }
 
     function render() {
-      const visible = attacks.slice(-800);
+      const visible = currentAttacks.slice(-800);
       globe.arcsData(visible)
         .arcColor('color').arcStroke('stroke')
         .arcDashLength(0.9).arcDashGap(4)
-        .arcDashInitialGap(() => Math.random() * 5)
+        .arcDashInitialGap(() => Math.random()*5)
         .arcDashAnimateTime('dashAnimateTime');
 
       const points = visible.flatMap(a => [
@@ -166,15 +189,13 @@
         .pointAltitude(0.018).pointRadius('size').pointColor('color');
     }
 
-    function rand(min, max) { return Math.random() * (max - min) + min; }
+    function rand(min,max){return Math.random()*(max-min)+min;}
 
-    // Auto-rotate ON by default
     globe.controls().autoRotate = true;
     globe.controls().autoRotateSpeed = 0.5;
 
-    // Start
     loadAttacks();
-    setInterval(loadAttacks, 120000); // refresh every 2 mins
+    setInterval(loadAttacks, 180000); // refresh every 3 mins
   </script>
 </body>
 </html>

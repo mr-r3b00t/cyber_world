@@ -3,44 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Global Cyber Attacks Live • GreedyBear Honeynet</title>
+  <title>Global Cyber Attacks Live</title>
   <script src="https://unpkg.com/globe.gl"></script>
   <style>
-    html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:'Segoe UI',sans-serif;}
-    #globe-container{position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;}
-    canvas{display:block;width:100%!important;height:100%!important;}
-
-    #title{position:fixed;top:20px;left:50%;transform:translateX(-50%);color:#00ffcc;font-size:3rem;font-weight:700;
-      text-shadow:0 0 30px #00ffcc;letter-spacing:4px;z-index:10;pointer-events:none;}
-
-    #stats{position:fixed;bottom:20px;left:20px;background:rgba(0,0,0,0.85);padding:18px 32px;border-radius:16px;
-      border:2px solid #00ff88;color:#00ffcc;z-index:10;font-size:1.3rem;box-shadow:0 0 30px rgba(0,255,136,0.4);backdrop-filter:blur(8px);}
+    html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:Arial,sans-serif;}
+    #globe-container{width:100vw;height:100vh;position:fixed;}
+    #title{position:fixed;top:20px;left:50%;transform:translateX(-50%);color:#00ffcc;font-size:3rem;
+      text-shadow:0 0 30px #00ffcc;z-index:10;pointer-events:none;}
+    #stats{position:fixed;bottom:20px;left:20px;background:rgba(0,0,0,0.8);padding:15px 25px;
+      border:2px solid #00ff88;border-radius:12px;color:#00ffcc;z-index:10;}
     #count{font-weight:bold;color:#00ffff;font-size:1.6rem;}
-
-    #controls{position:fixed;bottom:20px;right:20px;z-index:10;display:flex;gap:12px;flex-wrap:wrap;}
-    button{background:rgba(0,255,200,0.15);border:2px solid #00ffcc;color:#00ffcc;padding:12px 20px;border-radius:12px;
-      font-size:1rem;font-weight:bold;cursor:pointer;transition:all 0.3s;box-shadow:0 0 20px rgba(0,255,200,0.3);}
-    button:hover{background:rgba(0,255,200,0.3);transform:scale(1.05);}
-    button:active{transform:scale(0.98);}
-    button.pause, button.replay{border-color:#ff6600;color:#ff6600;}
-    button.pause:hover, button.replay:hover{background:rgba(255,102,0,0.3);}
-    button:disabled{opacity:0.5;cursor:not-allowed;}
+    #controls{position:fixed;bottom:20px;right:20px;z-index:10;display:flex;gap:10px;}
+    button{background:#001a17;border:2px solid #00ffcc;color:#00ffcc;padding:10px 18px;
+      border-radius:10px;font-weight:bold;cursor:pointer;}
+    button:hover{background:#00332a;}
   </style>
 </head>
 <body>
 
   <div id="title">GLOBAL CYBER ATTACKS LIVE</div>
-
   <div id="stats">
-    <div>Attacks visualized: <span id="count">0</span></div>
-    <div>Source: GreedyBear Honeynet</div>
-    <div id="status">Loading data…</div>
+    <div>Attacks: <span id="count">0</span></div>
+    <div id="status">Loading…</div>
   </div>
 
   <div id="controls">
-    <button id="playPause">Pause Rotation</button>
+    <button id="playPause">Pause</button>
     <button id="reset">Reset View</button>
-    <button id="refresh">Refresh Data</button>
     <button id="restart">Restart Attacks</button>
   </div>
 
@@ -49,153 +38,112 @@
   <script>
     const globe = Globe()
       .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
-      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
       .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
       .atmosphereColor('#00ffff')
       .atmosphereAltitude(0.18)
-      .pointOfView({ lat: 20, lng: 10, altitude: 2.8 })
       (document.getElementById('globe-container'));
 
-    let allAttacks = [];           // Full dataset (with timestamp if available)
-    let currentAttacks = [];        // Currently visible attacks
-    let isPaused = false;
-    let replayInterval = null;
-    const geoCache = new Map();
+    let allAttacks = [];
+    let displayed = [];
+    let playing = true;
 
-    const statusEl = document.getElementById('status');
-    const countEl = document.getElementById('count');
-    const playPauseBtn = document.getElementById('playPause');
-    const restartBtn = document.getElementById('restart');
-
-    // === BUTTONS ===
-    playPauseBtn.addEventListener('click', () => {
-      isPaused = !isPaused;
-      globe.controls().autoRotate = !isPaused;
-      playPauseBtn.textContent = isPaused ? 'Play Rotation' : 'Pause Rotation';
-      playPauseBtn.classList.toggle('pause', isPaused);
-    });
-
-    document.getElementById('reset').addEventListener('click', () => {
-      globe.pointOfView({ lat: 20, lng: 10, altitude: 2.8 }, 1500);
-    });
-
-    document.getElementById('refresh').addEventListener('click', () => {
-      statusEl.textContent = 'Refreshing data…';
-      loadAttacks();
-    });
-
-    restartBtn.addEventListener('click', () => {
-      if (replayInterval) clearInterval(replayInterval);
-      currentAttacks = [];
-      countEl.textContent = '0';
-      statusEl.textContent = 'Replaying from oldest attack…';
-      restartBtn.disabled = true;
-      restartBtn.textContent = 'Replaying…';
-
-      // Sort by timestamp if available, otherwise just use array order
-      const sorted = allAttacks.slice().sort((a,b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-      let i = 0;
-      replayInterval = setInterval(() => {
-        if (i >= sorted.length) {
-          clearInterval(replayInterval);
-          replayInterval = null;
-          statusEl.textContent = `Replay finished • ${new Date().toLocaleTimeString()}`;
-          restartBtn.disabled = false;
-          restartBtn.textContent = 'Restart Attacks';
-          return;
-        }
-        currentAttacks.push(sorted[i]);
-        countEl.textContent = currentAttacks.length.toLocaleString();
-        render();
-        i++;
-      }, 150); // ~150ms per attack = cinematic feel
-    });
-
-    // === GEO + DATA ===
-    async function geolocate(ip) {
-      if (geoCache.has(ip)) return geoCache.get(ip);
+    // Updated GeoIP using ipinfo.io (reliable, free)
+    async function getLatLng(ip) {
       try {
-        const res = await fetch(`https://ipapi.co/${ip}/json/`);
+        const res = await fetch(`https://ipinfo.io/${ip}/geo`);
         const d = await res.json();
-        if (d.latitude && d.longitude) {
-          const loc = { lat: d.latitude, lng: d.longitude };
-          geoCache.set(ip, loc);
-          return loc;
+        if (d.loc) {
+          const [lat, lng] = d.loc.split(',').map(Number);
+          return { lat, lng };
         }
-      } catch (e) {}
-      return { lat: (Math.random()-0.5)*180, lng: (Math.random()-0.5)*360 };
+      } catch(e) { console.error('GeoIP error for ' + ip, e); }
+      // Fallback random location
+      return { lat: Math.random()*180-90, lng: Math.random()*360-180 };
     }
 
     async function loadAttacks() {
       try {
         const resp = await fetch('https://mr-r3b00t.github.io/cyber_world/honeypot.json?t=' + Date.now());
-        if (!resp.ok) throw new Error('Not found');
-        const data = await resp.json();
-
+        const ips = await resp.json();                   // ← pure array of IPs
         allAttacks = [];
-        const ips = new Set();
 
-        // Extract IPs from all tables
-        ['High-Impact IPs', 'Recent New Threats', 'High Login Attempt IPs'].forEach(key => {
-          if (data[key]) {
-            data[key].forEach(row => {
-              const ip = row['IP Address'] || row['IP'] || row;
-              if (ip && typeof ip === 'string') ips.add(ip.trim());
-            });
-          }
-        });
+        document.getElementById('status').textContent = `Geolocating ${ips.length} IPs…`;
 
-        statusEl.textContent = `Geolocating ${ips.size} unique IPs…`;
-
-        for (const ip of ips) {
-          const geo = await geolocate(ip);
+        for (const ip of ips.slice(0, 50)) {             // Reduced to 50 to avoid rate limits and improve speed
+          const geo = await getLatLng(ip);
           allAttacks.push({
-            startLat: geo.lat + rand(-2,2),
-            startLng: geo.lng + rand(-4,4),
-            endLat: 50.11,
+            startLat: geo.lat + rand(-3,3),
+            startLng: geo.lng + rand(-5,5),
+            endLat: 50.11,      // Europe honeypot
             endLng: 8.68,
-            color: Math.random() < 0.15 ? ['#ff0066','#ff3366'] : ['#00ffcc','#00ffff'],
-            stroke: 1.5 + Math.random()*2,
-            dashAnimateTime: 1800 + Math.random()*2200,
-            timestamp: Date.now() // fallback timestamp
+            color: [['red', 'white'], ['white', 'red']][Math.round(Math.random())],
+            stroke: 1.5 + Math.random()*1.5,
+            dashAnimateTime: 1500 + Math.random()*2000
           });
         }
 
-        // Show all immediately on first load
-        currentAttacks = allAttacks.slice();
-        countEl.textContent = currentAttacks.length.toLocaleString();
-        statusEl.textContent = `Live • ${new Date().toLocaleTimeString()}`;
+        displayed = allAttacks.slice();
+        document.getElementById('count').textContent = displayed.length;
+        document.getElementById('status').textContent = 'LIVE';
         render();
 
-      } catch (e) {
-        statusEl.innerHTML = `<span style="color:#ff0066">Error: ${e.message}</span>`;
+      } catch(e) {
+        document.getElementById('status').textContent = 'Error loading data';
+        console.error(e);
       }
     }
 
     function render() {
-      const visible = currentAttacks.slice(-800);
+      const visible = displayed.slice(-600);
       globe.arcsData(visible)
         .arcColor('color').arcStroke('stroke')
         .arcDashLength(0.9).arcDashGap(4)
         .arcDashInitialGap(() => Math.random()*5)
-        .arcDashAnimateTime('dashAnimateTime');
+        .arcDashAnimateTime('dashAnimateTime')
+        .arcAltitude(0.4);  // Make arcs curved and more visible
 
       const points = visible.flatMap(a => [
-        { lat: a.startLat, lng: a.startLng, size: 0.6, color: '#ff3366' },
-        { lat: a.endLat,   lng: a.endLng,   size: 1.1, color: '#00ffff' }
+        {lat: a.startLat, lng: a.startLng, size: 0.6, color: 'red'},
+        {lat: a.endLat, lng: a.endLng, size: 1.0, color: 'white'}
       ]);
-      globe.pointsData(points)
-        .pointAltitude(0.018).pointRadius('size').pointColor('color');
+      globe.pointsData(points).pointAltitude(0.02).pointRadius('size').pointColor('color');
     }
 
     function rand(min,max){return Math.random()*(max-min)+min;}
 
+    // Controls
+    document.getElementById('playPause').onclick = () => {
+      playing = !playing;
+      globe.controls().autoRotate = playing;
+      this.textContent = playing ? 'Pause' : 'Play';
+    };
+
+    document.getElementById('reset').onclick = () => {
+      globe.pointOfView({lat:20,lng:0,altitude:2.5}, 1000);
+    };
+
+    document.getElementById('restart').onclick = () => {
+      displayed = [];
+      document.getElementById('count').textContent = '0';
+      document.getElementById('status').textContent = 'Replaying…';
+      let i = 0;
+      const timer = setInterval(() => {
+        if (i >= allAttacks.length) {
+          clearInterval(timer);
+          document.getElementById('status').textContent = 'LIVE';
+          return;
+        }
+        displayed.push(allAttacks[i++]);
+        document.getElementById('count').textContent = displayed.length;
+        render();
+      }, 120);
+    };
+
+    // Start
     globe.controls().autoRotate = true;
     globe.controls().autoRotateSpeed = 0.5;
-
     loadAttacks();
-    setInterval(loadAttacks, 180000); // refresh every 3 mins
+    setInterval(loadAttacks, 300000); // refresh every 5 min
   </script>
 </body>
 </html>

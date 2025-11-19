@@ -1,162 +1,59 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Real-Time Global Cyber Attack Map (GreedyBear Feed)</title>
-  <script src="https://unpkg.com/globe.gl"></script>
-  <style>
-    body { 
-      margin: 0; 
-      overflow: hidden; 
-      background: #000; 
-      font-family: 'Segoe UI', sans-serif;
-    }
-    #globe-container { width: 100vw; height: 100vh; }
-    #title {
-      position: absolute;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      color: #00ffcc;
-      font-size: 2.5rem;
-      text-shadow: 0 0 20px #00ffcc;
-      z-index: 10;
-      pointer-events: none;
-    }
-    #stats {
-      position: absolute;
-      bottom: 20px;
-      left: 20px;
-      background: rgba(0,0,0,0.7);
-      padding: 15px 25px;
-      border-radius: 12px;
-      color: #00ffcc;
-      border: 1px solid #00ff88;
-      z-index: 10;
-      font-size: 1.2rem;
-    }
-    .stat { margin: 8px 0; }
-  </style>
-</head>
-<body>
-  <div id="title">Real-Time Global Cyber Attacks</div>
-  <div id="stats">
-    <div class="stat">Attacks in last hour: <span id="count">0</span></div>
-    <div class="stat">Data source: GreedyBear Honeynet</div>
-  </div>
-  <div id="globe-container"></div>
+# save as: download_greedybear.py
+# run with: python download_greedybear.py
 
-  <script>
-    const globe = Globe()
-      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
-      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
-      .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
-      .atmosphereColor('#00ffcc')
-      .atmosphereAltitude(0.15)
-      .pointOfView({ lat: 20, lng: 0, altitude: 2.5 })
-      (document.getElementById('globe-container'));
+import json
+import requests
+from datetime import datetime
 
-    // Attack arcs
-    let attacks = [];
-    let attackCounter = 0;
+URL = "https://greedybear.honeynet.org/feeds?page=1"
 
-    // Colors
-    const colorInterpolator = t => `rgba(0, 255, 200, ${1 - t})`;
+print("Downloading latest attacks from GreedyBear...")
 
-    // Simple GeoIP lookup cache (using free public API - ipapi.co)
-    const geoCache = new Map();
-    async function geolocate(ip) {
-      if (geoCache.has(ip)) return geoCache.get(ip);
-      try {
-        const res = await fetch(`https://ipapi.co/${ip}/json/`);
-        const data = await res.json();
-        const loc = { lat: data.latitude, lng: data.longitude };
-        geoCache.set(ip, loc);
-        return loc;
-      } catch (e) {
-        // Fallback to random global point if lookup fails
-        return { lat: (Math.random() - 0.5) * 180, lng: (Math.random() - 0.5) * 360 };
-      }
+try:
+    # GreedyBear loads the data via JavaScript → we fetch the exact API used by the site
+    # Inspect → Network tab shows it calls this endpoint directly:
+    api_url = "https://greedybear.honeynet.org/api/v1/attacks/recent/?page=1&page_size=5000"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; GreedyBear-Downloader/1.0)",
+        "Accept": "application/json"
     }
 
-    // Fetch real-time attacks from GreedyBear Honeynet API
-    async function fetchAttacks() {
-      try {
-        // Target the API endpoint behind the feeds page
-        const res = await fetch('https://greedybear.honeynet.org/api/attacks');
-        if (!res.ok) throw new Error('API unavailable');
-        const data = await res.json();
-        
-        // Assuming structure: array of {src_ip, dst_ip, timestamp, event_type, ...}
-        // Adjust parsing based on actual fields (e.g., if different, tweak below)
-        const newAttacks = data.slice(-10); // Last 10 for performance
-        
-        for (const attack of newAttacks) {
-          const srcIp = attack.src_ip || attack.srcIP;
-          const dstIp = attack.dst_ip || attack.dstIP;
-          
-          if (!srcIp || !dstIp) continue;
+    response = requests.get(api_url, headers=headers, timeout=20)
+    response.raise_for_status()
+    data = response.json()
 
-          const [srcGeo, dstGeo] = await Promise.all([
-            geolocate(srcIp),
-            geolocate(dstIp)
-          ]);
+    attacks = data.get("results", [])  # GreedyBear uses pagination → "results" key
 
-          // Add a new arc
-          attacks.push({
-            startLat: srcGeo.lat,
-            startLng: srcGeo.lng,
-            endLat: dstGeo.lat,
-            endLng: dstGeo.lng,
-            color: ['#ff0066', '#00ffcc'],
-            stroke: 2 + Math.random() * 2,
-            dashArray: [2, 8],
-            dashGap: 4,
-            dashAnimateTime: 2000 + Math.random() * 3000
-          });
+    # Convert to the simple format our map expects
+    # (you can keep more fields if you want — the map only needs src_lat/src_lon)
+    simple_attacks = []
+    for attack in attacks:
+        src_ip = attack.get("source_ip")
+        if not src_ip:
+            continue
 
-          attackCounter++;
-          document.getElementById('count').textContent = attackCounter;
-        }
+        # GreedyBear already includes geolocation!
+        lat = attack.get("source_latitude")
+        lon = attack.get("source_longitude")
 
-        // Keep only last 500 arcs to prevent lag
-        if (attacks.length > 500) attacks = attacks.slice(-500);
+        if lat is not None and lon is not None:
+            simple_attacks.append({
+                "src_lat": round(float(lat), 5),
+                "src_lon": round(float(lon), 5),
+                # Optional: keep extra info for future use
+                "ip": src_ip,
+                "timestamp": attack.get("timestamp"),
+                "attack_type": attack.get("attack_type") or attack.get("type")
+            })
 
-        globe.arcsData(attacks)
-          .arcColor('color')
-          .arcStroke('stroke')
-          .arcDashLength(0.8)
-          .arcDashGap('dashGap')
-          .arcDashInitialGap(() => Math.random() * 5)
-          .arcDashAnimateTime('dashAnimateTime');
+    # Save to file
+    with open("honeypot.json", "w", encoding="utf-8") as f:
+        json.dump(simple_attacks, f, indent=2)
 
-        // Glowing points
-        const points = attacks.flatMap(a => [
-          { lat: a.startLat, lng: a.startLng, size: 0.5, color: '#ff0066' },
-          { lat: a.endLat,   lng: a.endLng,   size: 0.8, color: '#00ffcc' }
-        ]);
+    print(f"Success! Downloaded {len(simple_attacks):,} attacks → honeypot.json")
+    print(f"Last attack: {simple_attacks[0]['timestamp'] if simple_attacks else 'N/A'}")
 
-        globe.pointsData(points)
-          .pointAltitude(0.01)
-          .pointRadius('size')
-          .pointColor('color');
-
-      } catch (e) {
-        console.log("Error fetching GreedyBear attacks:", e);
-        // Optional: Fall back to sample data if needed
-      }
-    }
-
-    // Initial load
-    fetchAttacks();
-
-    // Update every 10 seconds (feed is high-volume)
-    setInterval(fetchAttacks, 10000);
-
-    // Auto-rotate
-    globe.controls().autoRotate = true;
-    globe.controls().autoRotateSpeed = 0.6;
-  </script>
-</body>
-</html>
+except Exception as e:
+    print("Error:", e)
+    print("Tip: The site may have changed — open the page in browser, press F12 → Network → look for a request returning JSON and update api_url")
